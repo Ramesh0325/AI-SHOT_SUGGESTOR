@@ -19,7 +19,6 @@ def detect_language(text: str) -> str:
     return "English"
 
 def translate_to_english(text: str) -> str:
-    # Translate Telugu to English if needed, else return as is
     if detect_language(text) == "Telugu":
         response = client.models.generate_content(
             model="gemini-2.5-flash-preview-05-20",
@@ -36,7 +35,6 @@ def translate_to_telugu(text: str) -> str:
     return response.text.strip()
 
 def gemini(prompt: str, genre: str = "Drama", mood: str = "Tense", num_shots: int = 5):
-    # Always work with English internally for stable results
     lang = detect_language(prompt)
     prompt_eng = translate_to_english(prompt) if lang == "Telugu" else prompt.strip()
 
@@ -55,7 +53,6 @@ def gemini(prompt: str, genre: str = "Drama", mood: str = "Tense", num_shots: in
 
     shots = parse_gemini_response(response.text, max_shots=num_shots)
 
-    # Add Telugu concise translation if original input was Telugu
     if lang == "Telugu":
         for shot in shots:
             shot["description_telugu"] = translate_to_telugu(shot["description"])
@@ -66,23 +63,35 @@ def parse_gemini_response(text: str, max_shots: int = 5):
     shots = []
     lines = text.strip().split('\n')
     count = 0
+
     for line in lines:
-        clean_line = line.strip()
-        if clean_line and not clean_line.lower().startswith("here are"):
-            count += 1
-            match = re.match(r"^(?:\d+\.\s*)?(.*?shot)?[:\-]?\s*(.*)$", clean_line, re.IGNORECASE)
-            name = match.group(1).strip() if match and match.group(1) else f"Shot {count}"
-            desc = match.group(2).strip() if match else clean_line
-            shots.append({
-                "num": count,
-                "name": name.capitalize(),
-                "description": desc
-            })
-            if count >= max_shots:
-                break
+        line = line.strip()
+        if not line or line.lower().startswith("here are"):
+            continue
+
+        # Match possible shot name and description
+        match = re.match(r"^(?:\d+\.\s*)?(?:(\*\*[^\*]+?\*\*)|([A-Za-z\s\-]+))?\s*[:\-\u2013]?\s*(.+)$", line)
+        count += 1
+
+        if match:
+            raw_name = match.group(1) or match.group(2)
+            name = raw_name.strip(" *").title() if raw_name else f"Shot {count}"
+            description = match.group(3).strip()
+        else:
+            name = f"Shot {count}"
+            description = line.strip()
+
+        shots.append({
+            "num": count,
+            "name": name,
+            "description": description
+        })
+
+        if count >= max_shots:
+            break
+
     return shots
 
-# Caching pipeline for performance
 @torch.no_grad()
 def load_pipeline(model_name: str):
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -92,7 +101,6 @@ def load_pipeline(model_name: str):
 
 def generate_shot_image(scene_prompt: str, shot_prompt: str, model_name: str = "CompVis/stable-diffusion-v1-4",
                         width: int = 320, height: int = 320, steps: int = 25):
-    # Always use English prompt internally for image generation
     prompt_eng = translate_to_english(scene_prompt)
     shot_eng = translate_to_english(shot_prompt)
     full_prompt = f"{prompt_eng}, {shot_eng}"

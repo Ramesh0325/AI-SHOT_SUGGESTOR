@@ -2,7 +2,8 @@ import streamlit as st
 import json
 import os
 from model import gemini as gemini_generate_shots, generate_shot_image
-from db import save_shot_results, get_project, get_project_shots, get_shot
+from db import (save_shot_results, get_project, get_project_shots, get_shot,
+               save_shot_image, get_shot_images)
 
 st.set_page_config(layout="wide", page_title="AI Cinematic Shot Suggestions")
 
@@ -83,6 +84,9 @@ if "shots" not in st.session_state:
 if "images" not in st.session_state:
     st.session_state.images = {}
 
+if "current_shot_id" not in st.session_state:
+    st.session_state.current_shot_id = None
+
 # Trigger shot generation
 if generate_btn and scene_description.strip():
     with st.spinner("Generating shot suggestions..."):
@@ -94,7 +98,7 @@ if generate_btn and scene_description.strip():
         # Save shots to database
         if st.session_state.shots:
             shot_data = json.dumps(st.session_state.shots)
-            save_shot_results(
+            shot_id = save_shot_results(
                 project['id'], 
                 scene_description, 
                 genre, 
@@ -102,6 +106,8 @@ if generate_btn and scene_description.strip():
                 model_name, 
                 shot_data
             )
+            # Store the current shot ID for image saving
+            st.session_state.current_shot_id = shot_id
 
 # Layout columns
 col1, col2 = st.columns([3, 7])
@@ -130,7 +136,14 @@ with col1:
                 # Load this shot set into the UI
                 shot_data = json.loads(shot_set['shot_data'])
                 st.session_state.shots = shot_data
-                st.session_state.images = {}
+                # Get saved images for this shot set
+                shot_images = get_shot_images(shot_set['id'])
+                # Convert the shot_images dict keys from integers to the format used in your app
+                formatted_images = {}
+                for shot_num, images in shot_images.items():
+                    formatted_images[f"shot_{shot_num}"] = images
+                st.session_state.images = formatted_images
+                st.session_state.current_shot_id = shot_set['id']
                 st.rerun()
 
 with col2:
@@ -162,10 +175,23 @@ with col2:
                         img = generate_shot_image(
                             scene_description, shot["description"], model_name=model_name
                         )
+                        
+                        # Add image to session state
+                        if shot_key not in st.session_state.images:
+                            st.session_state.images[shot_key] = []
                         st.session_state.images[shot_key].append(img)
+                        
+                        # Save image to database if we have a shot ID
+                        if st.session_state.current_shot_id:
+                            save_shot_image(
+                                st.session_state.current_shot_id, 
+                                shot_num, 
+                                img
+                            )
 
                 # 📸 Display images
-                for img in st.session_state.images[shot_key]:
-                    st.image(img, width=220)
+                if shot_key in st.session_state.images:
+                    for img in st.session_state.images[shot_key]:
+                        st.image(img, width=220)
 
                 st.markdown('</div>', unsafe_allow_html=True)

@@ -3,6 +3,9 @@ import os
 import hashlib
 import uuid
 from datetime import datetime
+import base64
+from PIL import Image
+import io
 
 DB_FILE = "shots_app.db"
 
@@ -11,6 +14,21 @@ def get_db_connection():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     return conn
+
+# Add this function to convert PIL Image to base64 string for storage
+def image_to_base64(image):
+    """Convert a PIL Image to a base64 encoded string"""
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+# Add this function to convert base64 string back to PIL Image
+def base64_to_image(base64_str):
+    """Convert a base64 encoded string to a PIL Image"""
+    if not base64_str:
+        return None
+    image_data = base64.b64decode(base64_str)
+    return Image.open(io.BytesIO(image_data))
 
 def init_db():
     """Initialize the database with required tables if they don't exist"""
@@ -51,6 +69,18 @@ def init_db():
         shot_data TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (project_id) REFERENCES projects (id)
+    )
+    ''')
+    
+    # Add new table for storing images
+    conn.execute('''
+    CREATE TABLE IF NOT EXISTS shot_images (
+        id TEXT PRIMARY KEY,
+        shot_id TEXT NOT NULL,
+        shot_number INTEGER NOT NULL,
+        image_data TEXT NOT NULL,  -- Base64 encoded image
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (shot_id) REFERENCES shots (id)
     )
     ''')
     
@@ -139,7 +169,7 @@ def delete_project(project_id):
 
 # Shot management functions
 def save_shot_results(project_id, scene_description, genre, mood, model_name, shot_data):
-    """Save generated shot results"""
+    """Save generated shot results and return the shot ID"""
     conn = get_db_connection()
     shot_id = str(uuid.uuid4())
     
@@ -151,7 +181,7 @@ def save_shot_results(project_id, scene_description, genre, mood, model_name, sh
     )
     conn.commit()
     conn.close()
-    return shot_id
+    return shot_id  # Return the shot ID
 
 def get_project_shots(project_id):
     """Get all shots for a project"""
@@ -169,6 +199,46 @@ def get_shot(shot_id):
     shot = conn.execute("SELECT * FROM shots WHERE id = ?", (shot_id,)).fetchone()
     conn.close()
     return dict(shot) if shot else None
+
+# Add function to save an image for a specific shot
+def save_shot_image(shot_id, shot_number, image):
+    """Save a generated image for a shot"""
+    conn = get_db_connection()
+    image_id = str(uuid.uuid4())
+    
+    # Convert PIL Image to base64 string
+    image_data = image_to_base64(image)
+    
+    conn.execute(
+        "INSERT INTO shot_images (id, shot_id, shot_number, image_data) VALUES (?, ?, ?, ?)",
+        (image_id, shot_id, shot_number, image_data)
+    )
+    conn.commit()
+    conn.close()
+    return image_id
+
+# Add function to get images for a shot
+def get_shot_images(shot_id):
+    """Get all images for a specific shot"""
+    conn = get_db_connection()
+    images = conn.execute(
+        "SELECT * FROM shot_images WHERE shot_id = ? ORDER BY shot_number, created_at",
+        (shot_id,)
+    ).fetchall()
+    conn.close()
+    
+    result = {}
+    for img in images:
+        shot_num = img['shot_number']
+        if shot_num not in result:
+            result[shot_num] = []
+        
+        # Convert base64 string back to PIL Image
+        pil_img = base64_to_image(img['image_data'])
+        if pil_img:
+            result[shot_num].append(pil_img)
+    
+    return result
 
 # Initialize the database on import
 init_db()

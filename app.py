@@ -18,7 +18,22 @@ if 'current_project' not in st.session_state:
     st.stop()
 
 project = st.session_state.current_project
-user = st.session_state.user
+project_id = project['id']
+
+# Use project-specific session state keys
+shots_key = f"shots_{project_id}"
+images_key = f"images_{project_id}"
+current_shot_id_key = f"current_shot_id_{project_id}"
+
+# Initialize session state for this project if needed
+if shots_key not in st.session_state:
+    st.session_state[shots_key] = []
+
+if images_key not in st.session_state:
+    st.session_state[images_key] = {}
+
+if current_shot_id_key not in st.session_state:
+    st.session_state[current_shot_id_key] = None
 
 st.title("🎬 AI-Powered Cinematic Shot Suggestion Tool")
 st.subheader(f"Project: {project['name']}")
@@ -72,32 +87,29 @@ with st.sidebar:
     
     st.markdown("---")
     if st.button("Back to Projects"):
-        # Clear current project and go back to projects page
+        # Clear current project and session state
         if 'current_project' in st.session_state:
             del st.session_state.current_project
+        
+        # Clear other session state variables
+        keys_to_reset = ["shots", "images", "current_shot_id"]
+        for key in keys_to_reset:
+            if key in st.session_state:
+                del st.session_state[key]
+        
         st.switch_page("pages/projects.py")
-
-# Session State
-if "shots" not in st.session_state:
-    st.session_state.shots = []
-
-if "images" not in st.session_state:
-    st.session_state.images = {}
-
-if "current_shot_id" not in st.session_state:
-    st.session_state.current_shot_id = None
 
 # Trigger shot generation
 if generate_btn and scene_description.strip():
     with st.spinner("Generating shot suggestions..."):
-        st.session_state.shots = gemini_generate_shots(
+        st.session_state[shots_key] = gemini_generate_shots(
             scene_description, genre, mood, num_shots
         )
-        st.session_state.images = {}
+        st.session_state[images_key] = {}
         
         # Save shots to database
-        if st.session_state.shots:
-            shot_data = json.dumps(st.session_state.shots)
+        if st.session_state[shots_key]:
+            shot_data = json.dumps(st.session_state[shots_key])
             shot_id = save_shot_results(
                 project['id'], 
                 scene_description, 
@@ -107,7 +119,7 @@ if generate_btn and scene_description.strip():
                 shot_data
             )
             # Store the current shot ID for image saving
-            st.session_state.current_shot_id = shot_id
+            st.session_state[current_shot_id_key] = shot_id
 
 # Layout columns
 col1, col2 = st.columns([3, 7])
@@ -132,32 +144,34 @@ with col1:
         st.info("No saved shots for this project yet.")
     else:
         for idx, shot_set in enumerate(saved_shots):
+            # When loading history:
             if st.button(f"Shot Set {idx+1}: {shot_set['created_at'][:16]}", key=f"load_{shot_set['id']}"):
                 # Load this shot set into the UI
                 shot_data = json.loads(shot_set['shot_data'])
-                st.session_state.shots = shot_data
+                st.session_state[shots_key] = shot_data
                 # Get saved images for this shot set
                 shot_images = get_shot_images(shot_set['id'])
                 # Convert the shot_images dict keys from integers to the format used in your app
                 formatted_images = {}
                 for shot_num, images in shot_images.items():
                     formatted_images[f"shot_{shot_num}"] = images
-                st.session_state.images = formatted_images
-                st.session_state.current_shot_id = shot_set['id']
+                st.session_state[images_key] = formatted_images
+                st.session_state[current_shot_id_key] = shot_set['id']
                 st.rerun()
 
 with col2:
     st.subheader("🎥 Shot Suggestions and Images")
 
-    if not st.session_state.shots:
+    # For the display of shots:
+    if not st.session_state[shots_key]:
         st.info("Enter scene details and click 'Generate Shot Suggestions' to begin.")
     else:
-        for shot in st.session_state.shots:
+        for shot in st.session_state[shots_key]:
             shot_num = shot["num"]
             shot_key = f"shot_{shot_num}"
-            if shot_key not in st.session_state.images:
-                st.session_state.images[shot_key] = []
-
+            if shot_key not in st.session_state[images_key]:
+                st.session_state[images_key][shot_key] = []
+                
             with st.container():
                 st.markdown('<div class="shot-container">', unsafe_allow_html=True)
 
@@ -177,21 +191,21 @@ with col2:
                         )
                         
                         # Add image to session state
-                        if shot_key not in st.session_state.images:
-                            st.session_state.images[shot_key] = []
-                        st.session_state.images[shot_key].append(img)
+                        if shot_key not in st.session_state[images_key]:
+                            st.session_state[images_key][shot_key] = []
+                        st.session_state[images_key][shot_key].append(img)
                         
                         # Save image to database if we have a shot ID
-                        if st.session_state.current_shot_id:
+                        if st.session_state[current_shot_id_key]:
                             save_shot_image(
-                                st.session_state.current_shot_id, 
+                                st.session_state[current_shot_id_key], 
                                 shot_num, 
                                 img
                             )
 
                 # 📸 Display images
-                if shot_key in st.session_state.images:
-                    for img in st.session_state.images[shot_key]:
+                if shot_key in st.session_state[images_key]:
+                    for img in st.session_state[images_key][shot_key]:
                         st.image(img, width=220)
 
                 st.markdown('</div>', unsafe_allow_html=True)

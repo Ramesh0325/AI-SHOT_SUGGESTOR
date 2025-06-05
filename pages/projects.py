@@ -9,6 +9,13 @@ from db import get_user_projects, create_project, delete_project, get_project_sh
 
 st.set_page_config(page_title="Projects - AI Shot Suggestor", layout="wide")
 
+def reset_app_state():
+    """Reset the app state variables when switching projects"""
+    keys_to_reset = ["shots", "images", "current_shot_id", "scene_description", "genre", "mood"]
+    for key in keys_to_reset:
+        if key in st.session_state:
+            del st.session_state[key]
+
 def show_projects():
     st.title("🎬 Your Shot Projects")
     
@@ -56,6 +63,9 @@ def show_projects():
                 with col2:
                     # View project button
                     if st.button("View & Edit", key=f"view_{project['id']}"):
+                        # Reset app state before switching to the new project
+                        reset_app_state()
+                        # Set the current project and navigate
                         st.session_state.current_project = project
                         st.switch_page("app.py")  # Go to main app with this project
                 

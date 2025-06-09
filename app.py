@@ -24,6 +24,7 @@ project_id = project['id']
 shots_key = f"shots_{project_id}"
 images_key = f"images_{project_id}"
 current_shot_id_key = f"current_shot_id_{project_id}"
+metadata_key = f"metadata_{project_id}"  # Add metadata key
 
 # Initialize session state for this project if needed
 if shots_key not in st.session_state:
@@ -34,6 +35,9 @@ if images_key not in st.session_state:
 
 if current_shot_id_key not in st.session_state:
     st.session_state[current_shot_id_key] = None
+
+if metadata_key not in st.session_state:  # Initialize metadata
+    st.session_state[metadata_key] = {}
 
 st.title("🎬 AI-Powered Cinematic Shot Suggestion Tool")
 st.subheader(f"Project: {project['name']}")
@@ -62,6 +66,12 @@ st.markdown("""
             margin-bottom: 1rem;
             border-top: 2px solid #dee2e6;
         }
+        .metadata-box {
+            background-color: #f9f9f9;
+            border-left: 3px solid #0a58ca;
+            padding: 10px 15px;
+            margin-bottom: 10px;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -72,28 +82,64 @@ MOODS = ["Tense", "Happy", "Melancholy", "Excited", "Calm", "Suspenseful", "Roma
 # Sidebar
 with st.sidebar:
     st.header("🎭 Scene Details")
-    scene_description = st.text_area("📝 Enter Scene Description (English or Telugu)", height=150)
+    
+    # Use stored metadata for defaults if available
+    default_desc = st.session_state[metadata_key].get('scene_description', '')
+    default_genre_idx = 0
+    if 'genre' in st.session_state[metadata_key]:
+        try:
+            default_genre_idx = GENRES.index(st.session_state[metadata_key]['genre'])
+        except ValueError:
+            default_genre_idx = 0
+            
+    default_mood_idx = 0
+    if 'mood' in st.session_state[metadata_key]:
+        try:
+            default_mood_idx = MOODS.index(st.session_state[metadata_key]['mood'])
+        except ValueError:
+            default_mood_idx = 0
+            
+    default_shots = st.session_state[metadata_key].get('num_shots', 5)
+    default_model = st.session_state[metadata_key].get('model_name', "dreamlike-art/dreamlike-photoreal-2.0")
+    
+    scene_description = st.text_area("📝 Enter Scene Description (English or Telugu)", 
+                                    value=default_desc, 
+                                    height=150)
 
-    genre = st.selectbox("🎬 Select Genre", GENRES, index=0)
-    mood = st.selectbox("🎭 Select Mood", MOODS, index=0)
+    genre = st.selectbox("🎬 Select Genre", GENRES, index=default_genre_idx)
+    mood = st.selectbox("🎭 Select Mood", MOODS, index=default_mood_idx)
 
-    num_shots = st.slider("🎞️ Number of Shots", 1, 10, 5)
+    num_shots = st.slider("🎞️ Number of Shots", 1, 10, default_shots)
     model_name = st.selectbox("🎨 Diffusion Model", [
         "CompVis/stable-diffusion-v1-4",
         "runwayml/stable-diffusion-v1-5",
         "dreamlike-art/dreamlike-photoreal-2.0"
-    ])
+    ], index=0 if default_model not in ["CompVis/stable-diffusion-v1-4", "runwayml/stable-diffusion-v1-5", "dreamlike-art/dreamlike-photoreal-2.0"] else ["CompVis/stable-diffusion-v1-4", "runwayml/stable-diffusion-v1-5", "dreamlike-art/dreamlike-photoreal-2.0"].index(default_model))
+    
     generate_btn = st.button("🚀 Generate Shot Suggestions")
     
     st.markdown("---")
+    
+    # Show current metadata if available
+    if st.session_state[metadata_key]:
+        st.write("### Current Settings")
+        st.markdown(f"**Scene:** {st.session_state[metadata_key].get('scene_description', '')[:50]}..." if len(st.session_state[metadata_key].get('scene_description', '')) > 50 else f"**Scene:** {st.session_state[metadata_key].get('scene_description', '')}")
+        st.write(f"**Genre:** {st.session_state[metadata_key].get('genre', '')}")
+        st.write(f"**Mood:** {st.session_state[metadata_key].get('mood', '')}")
+        st.write(f"**Shots:** {st.session_state[metadata_key].get('num_shots', '')}")
+        st.write(f"**Model:** {st.session_state[metadata_key].get('model_name', '')}")
+    
     if st.button("Back to Projects"):
         # Clear current project and session state
         if 'current_project' in st.session_state:
             del st.session_state.current_project
         
         # Clear other session state variables
-        keys_to_reset = ["shots", "images", "current_shot_id"]
-        for key in keys_to_reset:
+        project_keys = [key for key in st.session_state.keys() if key.startswith(f"shots_") or 
+                        key.startswith(f"images_") or 
+                        key.startswith(f"current_shot_id_") or
+                        key.startswith(f"metadata_")]
+        for key in project_keys:
             if key in st.session_state:
                 del st.session_state[key]
         
@@ -107,16 +153,28 @@ if generate_btn and scene_description.strip():
         )
         st.session_state[images_key] = {}
         
+        # Create and store metadata
+        metadata = {
+            "scene_description": scene_description,
+            "genre": genre,
+            "mood": mood,
+            "num_shots": num_shots,
+            "model_name": model_name
+        }
+        st.session_state[metadata_key] = metadata
+        
         # Save shots to database
         if st.session_state[shots_key]:
             shot_data = json.dumps(st.session_state[shots_key])
+            metadata_json = json.dumps(metadata)
             shot_id = save_shot_results(
                 project['id'], 
                 scene_description, 
                 genre, 
                 mood, 
                 model_name, 
-                shot_data
+                shot_data,
+                metadata_json  # Pass metadata as JSON string
             )
             # Store the current shot ID for image saving
             st.session_state[current_shot_id_key] = shot_id
@@ -126,14 +184,23 @@ col1, col2 = st.columns([3, 7])
 
 with col1:
     st.subheader("📜 Scene Description")
-    st.write(scene_description if scene_description else "_No scene description provided yet._")
+    if st.session_state[metadata_key].get('scene_description'):
+        st.write(st.session_state[metadata_key].get('scene_description'))
+    else:
+        st.write(scene_description if scene_description else "_No scene description provided yet._")
 
     st.markdown("---")
     st.subheader("⚙️ Settings")
-    st.write(f"**Genre:** {genre}")
-    st.write(f"**Mood:** {mood}")
-    st.write(f"**Shots:** {num_shots}")
-    st.write(f"**Model:** `{model_name}`")
+    if st.session_state[metadata_key]:
+        st.write(f"**Genre:** {st.session_state[metadata_key].get('genre', genre)}")
+        st.write(f"**Mood:** {st.session_state[metadata_key].get('mood', mood)}")
+        st.write(f"**Shots:** {st.session_state[metadata_key].get('num_shots', num_shots)}")
+        st.write(f"**Model:** `{st.session_state[metadata_key].get('model_name', model_name)}`")
+    else:
+        st.write(f"**Genre:** {genre}")
+        st.write(f"**Mood:** {mood}")
+        st.write(f"**Shots:** {num_shots}")
+        st.write(f"**Model:** `{model_name}`")
     
     st.markdown("---")
     st.subheader("📚 Saved Shot Sets")
@@ -144,20 +211,57 @@ with col1:
         st.info("No saved shots for this project yet.")
     else:
         for idx, shot_set in enumerate(saved_shots):
-            # When loading history:
-            if st.button(f"Shot Set {idx+1}: {shot_set['created_at'][:16]}", key=f"load_{shot_set['id']}"):
-                # Load this shot set into the UI
-                shot_data = json.loads(shot_set['shot_data'])
-                st.session_state[shots_key] = shot_data
-                # Get saved images for this shot set
-                shot_images = get_shot_images(shot_set['id'])
-                # Convert the shot_images dict keys from integers to the format used in your app
-                formatted_images = {}
-                for shot_num, images in shot_images.items():
-                    formatted_images[f"shot_{shot_num}"] = images
-                st.session_state[images_key] = formatted_images
-                st.session_state[current_shot_id_key] = shot_set['id']
-                st.rerun()
+            # Extract metadata if available
+            metadata = {}
+            if 'metadata' in shot_set and shot_set['metadata']:
+                try:
+                    metadata = json.loads(shot_set['metadata'])
+                except:
+                    # If metadata is malformed, create minimal metadata
+                    metadata = {
+                        "genre": shot_set['genre'],
+                        "mood": shot_set['mood'],
+                        "model_name": shot_set['model_name'],
+                        "scene_description": shot_set['scene_description'][:100]
+                    }
+            
+            # Create an expander for each shot set with some metadata preview
+            with st.expander(f"Shot Set {idx+1} - {metadata.get('genre', shot_set['genre'])}/{metadata.get('mood', shot_set['mood'])}", expanded=False):
+                # Display metadata in a nice format
+                st.markdown('<div class="metadata-box">', unsafe_allow_html=True)
+                st.write("**Scene:**")
+                st.write(metadata.get('scene_description', shot_set['scene_description']))
+                st.markdown('<hr style="margin: 5px 0;">', unsafe_allow_html=True)
+                st.write(f"**Genre:** {metadata.get('genre', shot_set['genre'])}")
+                st.write(f"**Mood:** {metadata.get('mood', shot_set['mood'])}")
+                st.write(f"**Shots:** {metadata.get('num_shots', 'N/A')}")
+                st.write(f"**Model:** {metadata.get('model_name', shot_set['model_name'])}")
+                st.write(f"**Created:** {shot_set['created_at'][:16]}")
+                st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Load button
+                if st.button("📋 Load This Set", key=f"load_{shot_set['id']}"):
+                    # Load this shot set into the UI
+                    shot_data = json.loads(shot_set['shot_data'])
+                    st.session_state[shots_key] = shot_data
+                    
+                    # Store the metadata in session state
+                    st.session_state[metadata_key] = metadata
+                    
+                    # Get saved images for this shot set
+                    shot_images = get_shot_images(shot_set['id'])
+                    # Convert the shot_images dict keys from integers to the format used in your app
+                    formatted_images = {}
+                    for shot_num, images in shot_images.items():
+                        formatted_images[f"shot_{shot_num}"] = images
+                    st.session_state[images_key] = formatted_images
+                    st.session_state[current_shot_id_key] = shot_set['id']
+                    st.rerun()
+                
+                # Delete button
+                if st.button("🗑️ Delete", key=f"delete_{shot_set['id']}"):
+                    # Add your delete logic here
+                    pass
 
 with col2:
     st.subheader("🎥 Shot Suggestions and Images")
@@ -186,8 +290,14 @@ with col2:
                 btn_key = f"img_btn_{shot_num}"
                 if st.button("🎨 Generate Image", key=btn_key):
                     with st.spinner(f"Generating image for Shot {shot_num}..."):
+                        # Use scene description from metadata if available
+                        current_scene = st.session_state[metadata_key].get('scene_description', scene_description)
+                        current_model = st.session_state[metadata_key].get('model_name', model_name)
+                        
                         img = generate_shot_image(
-                            scene_description, shot["description"], model_name=model_name
+                            current_scene, 
+                            shot["description"], 
+                            model_name=current_model
                         )
                         
                         # Add image to session state

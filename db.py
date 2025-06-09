@@ -6,6 +6,7 @@ from datetime import datetime
 import base64
 from PIL import Image
 import io
+import json
 
 DB_FILE = "shots_app.db"
 
@@ -67,6 +68,7 @@ def init_db():
         mood TEXT NOT NULL,
         model_name TEXT NOT NULL,
         shot_data TEXT NOT NULL,
+        metadata TEXT,  -- New column for metadata
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (project_id) REFERENCES projects (id)
     )
@@ -84,6 +86,14 @@ def init_db():
     )
     ''')
     
+    # Check if the metadata column exists and add it if not
+    try:
+        conn.execute('ALTER TABLE shots ADD COLUMN metadata TEXT')
+        print("Added metadata column to shots table")
+    except:
+        # Column likely already exists
+        pass
+        
     conn.commit()
     conn.close()
 
@@ -168,16 +178,26 @@ def delete_project(project_id):
     conn.close()
 
 # Shot management functions
-def save_shot_results(project_id, scene_description, genre, mood, model_name, shot_data):
+def save_shot_results(project_id, scene_description, genre, mood, model_name, shot_data, metadata=None):
     """Save generated shot results and return the shot ID"""
     conn = get_db_connection()
     shot_id = str(uuid.uuid4())
     
+    # If no separate metadata was provided, create it from the params
+    if metadata is None:
+        metadata = json.dumps({
+            "scene_description": scene_description,
+            "genre": genre,
+            "mood": mood,
+            "model_name": model_name,
+            "num_shots": len(json.loads(shot_data)) if shot_data else 0
+        })
+    
     conn.execute(
         """INSERT INTO shots 
-           (id, project_id, scene_description, genre, mood, model_name, shot_data) 
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (shot_id, project_id, scene_description, genre, mood, model_name, shot_data)
+           (id, project_id, scene_description, genre, mood, model_name, shot_data, metadata) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (shot_id, project_id, scene_description, genre, mood, model_name, shot_data, metadata)
     )
     conn.commit()
     conn.close()

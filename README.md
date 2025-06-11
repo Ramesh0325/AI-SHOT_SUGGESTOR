@@ -7,20 +7,22 @@ This project is an intelligent assistant that analyzes cinematic scene descripti
 ## ✨ Features
 
 - 🔤 **Bilingual Input Support**: Accepts scene descriptions in **English** or **Telugu**.
-- 🎭 **Genre & Mood Control**: Choose from Drama, Action, Comedy, Romance, Sci-Fi and moods like Tense, Happy, etc.
 - 🎬 **AI Shot Suggestions**: Generates camera shots like Wide Shot, Close-Up, Overhead, Underwater, etc., with rich visual storytelling.
-- 🖼️ **Image Generation**: Use Stable Diffusion models to create visual representations of the shots.
+- 🖼️ **Image Generation**: Use Stable Diffusion models to create visual representations of the shots, with or without a reference image.
+- 📷 **Reference Image Support**: Optionally upload a single reference image to guide the structure of generated images (using ControlNet/canny). If no image is provided, images are generated purely from the prompt.
 - 🔁 **Telugu Translation**: Automatic translation of shot descriptions for Telugu users.
 - 🧠 **Shot Ordering**: Ensures output shots follow logical story progression.
+- 💾 **Save & Manage Shots**: Save, load, and delete shot sets, with reference image stored in metadata.
 
 ---
 
 ## 🏗️ Project Structure
 
 ```
-cinematic-shot-suggestion/
-├── ui.py                # Streamlit front-end UI
+ai-shot-suggestor/
+├── app.py               # Streamlit main app (UI, workflow)
 ├── model.py             # Core logic for Gemini & Stable Diffusion integration
+├── db.py                # Database logic for users, projects, shots, images
 ├── requirements.txt     # Required Python packages
 ├── README.md            # Project documentation
 ```
@@ -65,7 +67,7 @@ with your actual Gemini API key from [Google AI Studio](https://makersuite.googl
 ## ▶️ Run the App
 
 ```bash
-streamlit run ui.py
+streamlit run app.py
 ```
 
 Then open `http://localhost:8501` in your browser.
@@ -74,7 +76,7 @@ Then open `http://localhost:8501` in your browser.
 
 ## 🖼️ Supported Image Models
 
-You can switch between different Stable Diffusion models in `model.py`:
+You can switch between different Stable Diffusion models in the app UI:
 
 - `CompVis/stable-diffusion-v1-4`
 - `runwayml/stable-diffusion-v1-5`
@@ -87,10 +89,8 @@ You can switch between different Stable Diffusion models in `model.py`:
 **Input**:
 ```
 Scene: People were traveling to London by ship when suddenly a large tsunami struck.
-Genre: Drama
-Mood: Tense
-Language: English
 Shots: 3
+Language: English
 ```
 
 **AI Output**:
@@ -98,7 +98,7 @@ Shots: 3
 2. **CLOSE-UP** – A terrified passenger grips the railing, water splashing on her face.
 3. **UNDERWATER SHOT** – Wreckage and floating debris engulfed in turbulent currents.
 
-> You can click "Generate Image" beside each shot to visualize it.
+> You can optionally upload a reference image to guide the generated visuals. If no image is uploaded, the AI will generate images based only on your prompt.
 
 ---
 
@@ -117,6 +117,8 @@ Shots: 3
 - This project is intended for **educational, creative, and experimental** purposes.
 - Do not share your API key publicly.
 - Best results are achieved with meaningful, vivid scene descriptions.
+- Only one reference image is supported per shot set. If multiple images are uploaded, only the first is used.
+- Genre and mood selection are not required in the current workflow.
 
 ---
 

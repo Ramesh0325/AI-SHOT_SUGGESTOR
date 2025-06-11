@@ -140,7 +140,8 @@ def generate_shot_image(
     guidance_scale: float = 7.5  # User control for prompt adherence
 ):
     """
-    Generate a cinematic shot image using the blended canny edges of all reference images.
+    Generate a cinematic shot image using the blended canny edges of all reference images if provided.
+    If no reference image is provided, generate an image from the prompt alone.
     Returns a list with a single image.
     The prompt is used for both shot suggestion and image generation.
     """
@@ -150,7 +151,8 @@ def generate_shot_image(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.float16 if device == "cuda" else torch.float32
 
-    if reference_images and len(reference_images) > 0:
+    # If reference image(s) provided and use_controlnet, use ControlNet pipeline
+    if use_controlnet and reference_images and len(reference_images) > 0:
         from diffusers import ControlNetModel, StableDiffusionControlNetPipeline
         controlnet = ControlNetModel.from_pretrained(
             "lllyasviel/sd-controlnet-canny", torch_dtype=dtype
@@ -181,4 +183,15 @@ def generate_shot_image(
             height=512
         ).images[0]
         return [img]
-    raise ValueError("At least one reference image is required for generation.")
+    # If no reference image or not using ControlNet, use base StableDiffusionPipeline
+    else:
+        pipe = StableDiffusionPipeline.from_pretrained(model_name, torch_dtype=dtype).to(device)
+        pipe.safety_checker = None
+        img = pipe(
+            prompt=full_prompt,
+            num_inference_steps=steps,
+            guidance_scale=guidance_scale,
+            width=512,
+            height=512
+        ).images[0]
+        return [img]

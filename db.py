@@ -273,3 +273,5 @@ def delete_shot(shot_id):
 
 # Initialize the database on import
 init_db()
+def function_isV():
+    pass

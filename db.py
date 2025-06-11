@@ -260,5 +260,16 @@ def get_shot_images(shot_id):
     
     return result
 
+# Add function to delete a shot and all its images from the database, given the shot ID
+def delete_shot(shot_id):
+    """Delete a shot and its images by shot ID"""
+    conn = get_db_connection()
+    # Delete related images
+    conn.execute("DELETE FROM shot_images WHERE shot_id = ?", (shot_id,))
+    # Delete the shot
+    conn.execute("DELETE FROM shots WHERE id = ?", (shot_id,))
+    conn.commit()
+    conn.close()
+
 # Initialize the database on import
 init_db()

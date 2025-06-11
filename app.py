@@ -3,7 +3,7 @@ import json
 import os
 from model import gemini as gemini_generate_shots, generate_shot_image
 from db import (save_shot_results, get_project, get_project_shots, get_shot,
-               save_shot_image, get_shot_images)
+               save_shot_image, get_shot_images, delete_shot)
 
 st.set_page_config(layout="wide", page_title="AI Cinematic Shot Suggestions")
 
@@ -82,50 +82,54 @@ MOODS = ["Tense", "Happy", "Melancholy", "Excited", "Calm", "Suspenseful", "Roma
 # Sidebar
 with st.sidebar:
     st.header("🎭 Scene Details")
-    
-    # Use stored metadata for defaults if available
-    default_desc = st.session_state[metadata_key].get('scene_description', '')
-    default_genre_idx = 0
-    if 'genre' in st.session_state[metadata_key]:
-        try:
-            default_genre_idx = GENRES.index(st.session_state[metadata_key]['genre'])
-        except ValueError:
-            default_genre_idx = 0
-            
-    default_mood_idx = 0
-    if 'mood' in st.session_state[metadata_key]:
-        try:
-            default_mood_idx = MOODS.index(st.session_state[metadata_key]['mood'])
-        except ValueError:
-            default_mood_idx = 0
-            
-    default_shots = st.session_state[metadata_key].get('num_shots', 5)
-    default_model = st.session_state[metadata_key].get('model_name', "dreamlike-art/dreamlike-photoreal-2.0")
-    
-    scene_description = st.text_area("📝 Enter Scene Description (English or Telugu)", 
-                                    value=default_desc, 
-                                    height=150)
 
-    genre = st.selectbox("🎬 Select Genre", GENRES, index=default_genre_idx)
-    mood = st.selectbox("🎭 Select Mood", MOODS, index=default_mood_idx)
+    # Reference image uploader (allow only one image)
+    reference_images = st.file_uploader(
+        "📷 Upload a reference image (optional)",
+        type=["png", "jpg", "jpeg"],
+        accept_multiple_files=False,
+        key="reference_images"
+    )
+    if reference_images:
+        st.write("1 image uploaded.")
+        reference_images = [reference_images]  # Always a list for downstream compatibility
+    else:
+        reference_images = []
+    st.session_state[f"reference_images_{project_id}"] = reference_images
 
-    num_shots = st.slider("🎞️ Number of Shots", 1, 10, default_shots)
+    # Show uploaded reference image as visible frame
+    if reference_images:
+        st.write("**Reference Image Preview:**")
+        st.image(reference_images[0], caption="Ref 1", use_container_width=True)
+
+    # Re-enable text prompt area
+    user_prompt = st.text_area(
+        "📝 Enter a detailed description of the shot you want (e.g., 'A dramatic close-up of a woman under moody lighting, cinematic, 35mm film look')",
+        value="",
+        height=120
+    )
+
+    # Remove genre and mood options for clarity
+    num_shots = st.slider("🎞️ Number of Shots", 1, 10, 5)
     model_name = st.selectbox("🎨 Diffusion Model", [
         "CompVis/stable-diffusion-v1-4",
         "runwayml/stable-diffusion-v1-5",
         "dreamlike-art/dreamlike-photoreal-2.0"
-    ], index=0 if default_model not in ["CompVis/stable-diffusion-v1-4", "runwayml/stable-diffusion-v1-5", "dreamlike-art/dreamlike-photoreal-2.0"] else ["CompVis/stable-diffusion-v1-4", "runwayml/stable-diffusion-v1-5", "dreamlike-art/dreamlike-photoreal-2.0"].index(default_model))
-    
+    ], index=2)
     generate_btn = st.button("🚀 Generate Shot Suggestions")
-    
     st.markdown("---")
+    
+    # Add img2img strength slider
+    img2img_strength = st.slider("Image-to-Image Strength", 0.2, 0.9, 0.4, 0.05)
+    # Add ControlNet conditioning scale slider
+    controlnet_conditioning_scale = st.slider("ControlNet Conditioning Scale (structure adherence)", 0.1, 1.0, 1.0, 0.05)
+    # Add guidance scale slider
+    guidance_scale = st.slider("Guidance Scale (prompt adherence)", 1.0, 15.0, 7.5, 0.5)
     
     # Show current metadata if available
     if st.session_state[metadata_key]:
         st.write("### Current Settings")
         st.markdown(f"**Scene:** {st.session_state[metadata_key].get('scene_description', '')[:50]}..." if len(st.session_state[metadata_key].get('scene_description', '')) > 50 else f"**Scene:** {st.session_state[metadata_key].get('scene_description', '')}")
-        st.write(f"**Genre:** {st.session_state[metadata_key].get('genre', '')}")
-        st.write(f"**Mood:** {st.session_state[metadata_key].get('mood', '')}")
         st.write(f"**Shots:** {st.session_state[metadata_key].get('num_shots', '')}")
         st.write(f"**Model:** {st.session_state[metadata_key].get('model_name', '')}")
     
@@ -146,37 +150,46 @@ with st.sidebar:
         st.switch_page("pages/projects.py")
 
 # Trigger shot generation
-if generate_btn and scene_description.strip():
+if generate_btn and user_prompt.strip():
+    # Use the prompt exactly as entered by the user, no augmentation
+    enhanced_prompt = user_prompt.strip()
     with st.spinner("Generating shot suggestions..."):
         st.session_state[shots_key] = gemini_generate_shots(
-            scene_description, genre, mood, num_shots
+            enhanced_prompt, "", "", num_shots  # Only use user prompt
         )
         st.session_state[images_key] = {}
-        
-        # Create and store metadata
+        # Save the reference image (if any) in the metadata when saving shots
         metadata = {
-            "scene_description": scene_description,
-            "genre": genre,
-            "mood": mood,
+            "scene_description": enhanced_prompt,
             "num_shots": num_shots,
-            "model_name": model_name
+            "model_name": model_name,
+            "reference_image": None
         }
+        if reference_images:
+            # Store the reference image as base64 for persistence
+            from db import image_to_base64
+            # Convert UploadedFile to PIL Image before encoding
+            from PIL import Image
+            import io
+            uploaded_file = reference_images[0]
+            if hasattr(uploaded_file, 'read'):
+                pil_img = Image.open(uploaded_file).convert("RGB")
+            else:
+                pil_img = uploaded_file
+            metadata["reference_image"] = image_to_base64(pil_img)
         st.session_state[metadata_key] = metadata
-        
-        # Save shots to database
         if st.session_state[shots_key]:
             shot_data = json.dumps(st.session_state[shots_key])
             metadata_json = json.dumps(metadata)
             shot_id = save_shot_results(
-                project['id'], 
-                scene_description, 
-                genre, 
-                mood, 
-                model_name, 
+                project['id'],
+                enhanced_prompt,
+                "",  # genre removed
+                "",  # mood removed
+                model_name,
                 shot_data,
-                metadata_json  # Pass metadata as JSON string
+                metadata_json
             )
-            # Store the current shot ID for image saving
             st.session_state[current_shot_id_key] = shot_id
 
 # Layout columns
@@ -187,18 +200,14 @@ with col1:
     if st.session_state[metadata_key].get('scene_description'):
         st.write(st.session_state[metadata_key].get('scene_description'))
     else:
-        st.write(scene_description if scene_description else "_No scene description provided yet._")
+        st.write(user_prompt if user_prompt else "_No scene description provided yet._")
 
     st.markdown("---")
     st.subheader("⚙️ Settings")
     if st.session_state[metadata_key]:
-        st.write(f"**Genre:** {st.session_state[metadata_key].get('genre', genre)}")
-        st.write(f"**Mood:** {st.session_state[metadata_key].get('mood', mood)}")
         st.write(f"**Shots:** {st.session_state[metadata_key].get('num_shots', num_shots)}")
         st.write(f"**Model:** `{st.session_state[metadata_key].get('model_name', model_name)}`")
     else:
-        st.write(f"**Genre:** {genre}")
-        st.write(f"**Mood:** {mood}")
         st.write(f"**Shots:** {num_shots}")
         st.write(f"**Model:** `{model_name}`")
     
@@ -226,17 +235,19 @@ with col1:
                     }
             
             # Create an expander for each shot set with some metadata preview
-            with st.expander(f"Shot Set {idx+1} - {metadata.get('genre', shot_set['genre'])}/{metadata.get('mood', shot_set['mood'])}", expanded=False):
+            with st.expander(f"Shot Set {idx+1}", expanded=False):
                 # Display metadata in a nice format
                 st.markdown('<div class="metadata-box">', unsafe_allow_html=True)
                 st.write("**Scene:**")
                 st.write(metadata.get('scene_description', shot_set['scene_description']))
                 st.markdown('<hr style="margin: 5px 0;">', unsafe_allow_html=True)
-                st.write(f"**Genre:** {metadata.get('genre', shot_set['genre'])}")
-                st.write(f"**Mood:** {metadata.get('mood', shot_set['mood'])}")
                 st.write(f"**Shots:** {metadata.get('num_shots', 'N/A')}")
                 st.write(f"**Model:** {metadata.get('model_name', shot_set['model_name'])}")
                 st.write(f"**Created:** {shot_set['created_at'][:16]}")
+                # Show reference image if present
+                if metadata.get('reference_image'):
+                    from db import base64_to_image
+                    st.image(base64_to_image(metadata['reference_image']), caption="Reference Image", use_container_width=True)
                 st.markdown('</div>', unsafe_allow_html=True)
                 
                 # Load button
@@ -260,8 +271,10 @@ with col1:
                 
                 # Delete button
                 if st.button("🗑️ Delete", key=f"delete_{shot_set['id']}"):
-                    # Add your delete logic here
-                    pass
+                    # Delete this shot set and its images from the database
+                    delete_shot(shot_set['id'])
+                    st.success("Shot set deleted.")
+                    st.rerun()
 
 with col2:
     st.subheader("🎥 Shot Suggestions and Images")
@@ -289,33 +302,70 @@ with col2:
                 # 🖼️ Image Generator
                 btn_key = f"img_btn_{shot_num}"
                 if st.button("🎨 Generate Image", key=btn_key):
-                    with st.spinner(f"Generating image for Shot {shot_num}..."):
-                        # Use scene description from metadata if available
-                        current_scene = st.session_state[metadata_key].get('scene_description', scene_description)
-                        current_model = st.session_state[metadata_key].get('model_name', model_name)
-                        
-                        img = generate_shot_image(
-                            current_scene, 
-                            shot["description"], 
-                            model_name=current_model
-                        )
-                        
-                        # Add image to session state
+                    ref_imgs = st.session_state.get(f"reference_images_{project_id}", [])
+                    # Use the prompt exactly as entered by the user, no augmentation
+                    enhanced_prompt = user_prompt.strip()
+                    if ref_imgs:
+                        with st.spinner(f"Preprocessing reference image(s) and generating for Shot {shot_num}..."):
+                            current_model = st.session_state[metadata_key].get('model_name', model_name)
+                            results = generate_shot_image(
+                                enhanced_prompt,
+                                enhanced_prompt,
+                                model_name=current_model,
+                                reference_images=ref_imgs,
+                                use_controlnet=True,
+                                strength=img2img_strength,
+                                controlnet_conditioning_scale=controlnet_conditioning_scale,
+                                guidance_scale=guidance_scale
+                            )
                         if shot_key not in st.session_state[images_key]:
                             st.session_state[images_key][shot_key] = []
-                        st.session_state[images_key][shot_key].append(img)
-                        
-                        # Save image to database if we have a shot ID
+                        st.session_state[images_key][shot_key].extend(results)
                         if st.session_state[current_shot_id_key]:
-                            save_shot_image(
-                                st.session_state[current_shot_id_key], 
-                                shot_num, 
-                                img
+                            # Save all generated images (now just Image objects, not tuples)
+                            for img in results:
+                                save_shot_image(
+                                    st.session_state[current_shot_id_key],
+                                    shot_num,
+                                    img
+                                )
+                        st.rerun()
+                    else:
+                        with st.spinner(f"Generating image for Shot {shot_num}..."):
+                            current_model = st.session_state[metadata_key].get('model_name', model_name)
+                            results = generate_shot_image(
+                                enhanced_prompt,
+                                enhanced_prompt,
+                                model_name=current_model,
+                                reference_images=None,
+                                use_controlnet=False,
+                                strength=img2img_strength,
+                                controlnet_conditioning_scale=controlnet_conditioning_scale,
+                                guidance_scale=guidance_scale
                             )
-
+                        if shot_key not in st.session_state[images_key]:
+                            st.session_state[images_key][shot_key] = []
+                        st.session_state[images_key][shot_key].extend(results)
+                        if st.session_state[current_shot_id_key]:
+                            # Save all generated images (now just Image objects, not tuples)
+                            for img in results:
+                                save_shot_image(
+                                    st.session_state[current_shot_id_key],
+                                    shot_num,
+                                    img
+                                )
+                        st.rerun()
                 # 📸 Display images
                 if shot_key in st.session_state[images_key]:
-                    for img in st.session_state[images_key][shot_key]:
-                        st.image(img, width=220)
+                    imgs_and_expls = st.session_state[images_key][shot_key]
+                    if imgs_and_expls:
+                        # Only show the latest generated image for this shot
+                        latest = imgs_and_expls[-1]
+                        # Handle both (img, explanation) tuple and just img
+                        if isinstance(latest, tuple) and len(latest) == 2:
+                            img, _ = latest
+                        else:
+                            img = latest
+                        st.image(img, use_container_width=True)
 
                 st.markdown('</div>', unsafe_allow_html=True)
